@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Arrow Aim</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #111827;
+      color: white;
+      font-family: Arial, sans-serif;
+      overflow: hidden;
+    }
+    #game {
+      position: relative;
+      width: min(900px, 96vw);
+      height: min(600px, 90vh);
+      background: #0f172a;
+      border: 2px solid #334155;
+      border-radius: 14px;
+      overflow: hidden;
+      cursor: crosshair;
+      user-select: none;
+    }
+    #hud {
+      position: absolute;
+      z-index: 5;
+      top: 16px;
+      left: 20px;
+      font-size: 20px;
+      font-weight: bold;
+    }
+    #hint {
+      position: absolute;
+      z-index: 5;
+      top: 18px;
+      right: 20px;
+      color: #94a3b8;
+      font-size: 14px;
+    }
+    #target {
+      position: absolute;
+      width: 70px;
+      height: 38px;
+      border-radius: 7px;
+      background: #38bdf8;
+      box-shadow: 0 0 18px rgba(56, 189, 248, .45);
+    }
+    #player {
+      position: absolute;
+      left: 50%;
+      bottom: 35px;
+      width: 8px;
+      height: 8px;
+      background: white;
+      border-radius: 50%;
+      transform: translateX(-50%);
+      z-index: 3;
+    }
+    #arrow {
+      position: absolute;
+      left: 50%;
+      bottom: 39px;
+      width: 0;
+      height: 0;
+      z-index: 2;
+      transform-origin: 0 50%;
+      pointer-events: none;
+    }
+    #arrowLine {
+      position: absolute;
+      left: 0;
+      top: -2px;
+      width: 0;
+      height: 4px;
+      background: white;
+      border-radius: 3px;
+      transform-origin: left center;
+    }
+    #arrowHead {
+      position: absolute;
+      left: -2px;
+      top: -7px;
+      width: 0;
+      height: 0;
+      border-top: 7px solid transparent;
+      border-bottom: 7px solid transparent;
+      border-left: 13px solid white;
+    }
+    #gameOver {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      display: none;
+      place-items: center;
+      background: rgba(2, 6, 23, .82);
+      text-align: center;
+    }
+    #gameOver.show { display: grid; }
+    #gameOver h1 { margin: 0 0 8px; font-size: 44px; }
+    #gameOver p { color: #cbd5e1; }
+    button {
+      border: 0;
+      padding: 11px 20px;
+      border-radius: 8px;
+      background: white;
+      color: #111827;
+      font-weight: bold;
+      cursor: pointer;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div id="game">
+    <div id="hud">Score: <span id="score">0</span></div>
+    <div id="hint">Move mouse to aim • Click to fire</div>
+    <div id="target"></div>
+    <div id="player"></div>
+    <div id="arrow"><div id="arrowLine"></div><div id="arrowHead"></div></div>
+    <div id="gameOver">
+      <div>
+        <h1>Game Over</h1>
+        <p>You missed! Score: <span id="finalScore">0</span></p>
+        <button id="restart">Play Again</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const game = document.getElementById('game');
+    const target = document.getElementById('target');
+    const arrow = document.getElementById('arrow');
+    const arrowLine = document.getElementById('arrowLine');
+    const scoreEl = document.getElementById('score');
+    const gameOver = document.getElementById('gameOver');
+    const finalScore = document.getElementById('finalScore');
+    const restart = document.getElementById('restart');
+
+    let score = 0;
+    let running = true;
+    let targetX = 0;
+    let targetY = 120;
+    let targetVX = 2.2;
+    let aimAngle = -Math.PI / 2;
+    let lastTime = performance.now();
+
+    function resetTarget() {
+      targetX = Math.random() * (game.clientWidth - target.offsetWidth);
+      targetY = 90 + Math.random() * Math.max(80, game.clientHeight - 230);
+      targetVX = (Math.random() < 0.5 ? -1 : 1) * (2 + score * 0.15);
+      target.style.left = targetX + 'px';
+      target.style.top = targetY + 'px';
+    }
+
+    function updateAim(e) {
+      const rect = game.getBoundingClientRect();
+      const playerX = rect.width / 2;
+      const playerY = rect.height - 39;
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      aimAngle = Math.atan2(mouseY - playerY, mouseX - playerX);
+
+      arrow.style.transform = `rotate(${aimAngle}rad)`;
+      arrowLine.style.width = '70px';
+    }
+
+    function pointToSegmentDistance(px, py, x1, y1, x2, y2) {
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const lengthSq = dx * dx + dy * dy;
+      if (lengthSq === 0) return Math.hypot(px - x1, py - y1);
+      let t = ((px - x1) * dx + (py - y1) * dy) / lengthSq;
+      t = Math.max(0, Math.min(1, t));
+      const cx = x1 + t * dx;
+      const cy = y1 + t * dy;
+      return Math.hypot(px - cx, py - cy);
+    }
+
+    function fire() {
+      if (!running) return;
+
+      const rect = game.getBoundingClientRect();
+      const startX = rect.width / 2;
+      const startY = rect.height - 39;
+      const dx = Math.cos(aimAngle);
+      const dy = Math.sin(aimAngle);
+      const maxDistance = Math.hypot(rect.width, rect.height) * 1.5;
+      const endX = startX + dx * maxDistance;
+      const endY = startY + dy * maxDistance;
+
+      const tx = targetX + target.offsetWidth / 2;
+      const ty = targetY + target.offsetHeight / 2;
+      const hitDistance = pointToSegmentDistance(tx, ty, startX, startY, endX, endY);
+
+      if (hitDistance <= 28) {
+        score++;
+        scoreEl.textContent = score;
+        resetTarget();
+      } else {
+        endGame();
+      }
+    }
+
+    function endGame() {
+      running = false;
+      finalScore.textContent = score;
+      gameOver.classList.add('show');
+    }
+
+    function startGame() {
+      score = 0;
+      scoreEl.textContent = '0';
+      running = true;
+      gameOver.classList.remove('show');
+      resetTarget();
+    }
+
+    function animate(now) {
+      const dt = Math.min(32, now - lastTime);
+      lastTime = now;
+
+      if (running) {
+        targetX += targetVX * dt / 16.67;
+        const maxX = game.clientWidth - target.offsetWidth;
+        if (targetX <= 0 || targetX >= maxX) {
+          targetX = Math.max(0, Math.min(maxX, targetX));
+          targetVX *= -1;
+        }
+        target.style.left = targetX + 'px';
+      }
+
+      requestAnimationFrame(animate);
+    }
+
+    game.addEventListener('mousemove', updateAim);
+    game.addEventListener('click', (e) => {
+      if (e.target !== restart) fire();
+    });
+    restart.addEventListener('click', (e) => {
+      e.stopPropagation();
+      startGame();
+    });
+
+    startGame();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
